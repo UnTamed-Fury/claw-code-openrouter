@@ -15,7 +15,17 @@ pub use prompt_cache::{
     PromptCacheStats,
 };
 pub use providers::anthropic::{AnthropicClient, AnthropicClient as ApiClient, AuthSource};
+pub use providers::gemini::{
+    has_api_key as gemini_has_api_key, read_base_url as _gemini_base_url,
+};
 pub use providers::openai_compat::{OpenAiCompatClient, OpenAiCompatConfig};
+pub use providers::openrouter::{
+    has_api_key as openrouter_has_api_key, read_base_url as openrouter_base_url,
+    OpenRouterClient, OpenRouterConfig,
+};
+pub use providers::qwen::{
+    has_api_key as qwen_has_api_key, read_base_url as _qwen_base_url,
+};
 pub use providers::{
     detect_provider_kind, max_tokens_for_model, resolve_model_alias, ProviderKind,
 };

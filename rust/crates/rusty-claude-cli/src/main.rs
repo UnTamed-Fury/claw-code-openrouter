@@ -26,8 +26,8 @@ use std::time::{Duration, Instant, UNIX_EPOCH};
 use api::{
     oauth_token_is_expired, resolve_startup_auth_source, AnthropicClient, AuthSource,
     ContentBlockDelta, InputContentBlock, InputMessage, MessageRequest, MessageResponse,
-    OutputContentBlock, PromptCache, StreamEvent as ApiStreamEvent, ToolChoice, ToolDefinition,
-    ToolResultContentBlock,
+    OpenAiCompatClient, OpenAiCompatConfig, OutputContentBlock, PromptCache, ProviderClient,
+    StreamEvent as ApiStreamEvent, ToolChoice, ToolDefinition, ToolResultContentBlock,
 };
 
 use commands::{
@@ -55,7 +55,7 @@ use serde::Deserialize;
 use serde_json::{json, Map, Value};
 use tools::{GlobalToolRegistry, RuntimeToolDefinition, ToolSearchOutput};
 
-const DEFAULT_MODEL: &str = "claude-opus-4-6";
+const DEFAULT_MODEL: &str = "or-free";
 fn max_tokens_for_model(model: &str) -> u32 {
     if model.contains("opus") {
         32_000
@@ -472,7 +472,7 @@ fn parse_args(args: &[String]) -> Result<CliAction, String> {
         ),
         _other => Ok(CliAction::Prompt {
             prompt: rest.join(" "),
-            model,
+            model: resolve_model_alias(&model).to_string(),
             output_format,
             allowed_tools,
             permission_mode,
@@ -737,9 +737,33 @@ fn levenshtein_distance(left: &str, right: &str) -> usize {
 
 fn resolve_model_alias(model: &str) -> &str {
     match model {
+        // OpenRouter aliases (PRIMARY)
+        "free" | "or-free" => "openrouter/free",
+        "or-sonnet" => "anthropic/claude-sonnet-4.6",
+        "or-opus" => "anthropic/claude-opus-4.6",
+        "or-haiku" => "anthropic/claude-3-5-haiku-20241022",
+        "or-gpt-4o" => "openai/gpt-4o",
+        "or-gpt-5" => "openai/gpt-5",
+        "or-gemini" => "google/gemini-2.5-pro",
+        "or-gemini-flash" => "google/gemini-2.5-flash",
+        "or-gemini-pro" => "google/gemini-2.5-pro",
+        "or-qwen" => "qwen/qwen3-235b-a22b",
+        "or-qwen-max" => "qwen/qwen-max",
+        "or-qwen-plus" => "qwen/qwen-plus",
+        "or-grok" => "x-ai/grok-3",
+        "or-mistral" => "mistralai/mistral-large-2411",
+        "or-llama" => "meta-llama/llama-4-maverick",
+        "or-deepseek" => "deepseek/deepseek-chat-v3",
+        // Anthropic (secondary)
         "opus" => "claude-opus-4-6",
         "sonnet" => "claude-sonnet-4-6",
         "haiku" => "claude-haiku-4-5-20251213",
+        // Gemini (secondary)
+        "gemini-flash" => "gemini-2.5-flash",
+        "gemini-pro" => "gemini-2.5-pro",
+        // Qwen (secondary)
+        "qwen-max" => "qwen-max",
+        "qwen-plus" => "qwen-plus",
         _ => model,
     }
 }
@@ -5571,7 +5595,7 @@ impl runtime::PermissionPrompter for CliPermissionPrompter {
 
 struct AnthropicRuntimeClient {
     runtime: tokio::runtime::Runtime,
-    client: AnthropicClient,
+    client: ProviderClient,
     session_id: String,
     model: String,
     enable_tools: bool,
@@ -5591,11 +5615,59 @@ impl AnthropicRuntimeClient {
         tool_registry: GlobalToolRegistry,
         progress_reporter: Option<InternalPromptProgressReporter>,
     ) -> Result<Self, Box<dyn std::error::Error>> {
+        // Detect which provider to use based on the model (OpenRouter-first)
+        let resolved = api::resolve_model_alias(&model);
+        let provider = api::detect_provider_kind(&resolved);
+        let client = match provider {
+            api::ProviderKind::OpenRouter => {
+                ProviderClient::OpenRouter(api::OpenRouterClient::from_env()
+                    .map_err(|e| format!("missing OpenRouter credentials: {e}"))?)
+            }
+            api::ProviderKind::Anthropic => {
+                ProviderClient::Anthropic(
+                    AnthropicClient::from_auth(resolve_cli_auth_source()?)
+                        .with_base_url(api::read_base_url()),
+                )
+            }
+            api::ProviderKind::Xai => {
+                ProviderClient::Xai(api::OpenAiCompatClient::from_env(
+                    api::OpenAiCompatConfig::xai(),
+                )
+                .map_err(|e| format!("missing XAI credentials: {e}"))?)
+            }
+            api::ProviderKind::OpenAi => {
+                ProviderClient::OpenAi(api::OpenAiCompatClient::from_env(
+                    api::OpenAiCompatConfig::openai(),
+                )
+                .map_err(|e| format!("missing OpenAI credentials: {e}"))?)
+            }
+            api::ProviderKind::Gemini => {
+                ProviderClient::Gemini(api::OpenAiCompatClient::from_env(
+                    api::OpenAiCompatConfig {
+                        provider_name: "Gemini",
+                        api_key_env: "GEMINI_API_KEY",
+                        base_url_env: "GEMINI_BASE_URL",
+                        default_base_url: "https://generativelanguage.googleapis.com/v1beta/openai",
+                    },
+                )
+                .map_err(|e| format!("missing Gemini credentials: {e}"))?)
+            }
+            api::ProviderKind::Qwen => {
+                ProviderClient::Qwen(api::OpenAiCompatClient::from_env(
+                    api::OpenAiCompatConfig {
+                        provider_name: "Qwen",
+                        api_key_env: "QWEN_API_KEY",
+                        base_url_env: "QWEN_BASE_URL",
+                        default_base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+                    },
+                )
+                .map_err(|e| format!("missing Qwen credentials: {e}"))?)
+            }
+        };
+        let client = client.with_prompt_cache(PromptCache::new(session_id));
         Ok(Self {
             runtime: tokio::runtime::Runtime::new()?,
-            client: AnthropicClient::from_auth(resolve_cli_auth_source()?)
-                .with_base_url(api::read_base_url())
-                .with_prompt_cache(PromptCache::new(session_id)),
+            client,
             session_id: session_id.to_string(),
             model,
             enable_tools,
@@ -5639,8 +5711,9 @@ impl ApiClient for AnthropicRuntimeClient {
         if let Some(progress_reporter) = &self.progress_reporter {
             progress_reporter.mark_model_phase();
         }
+        let resolved_model = resolve_model_alias(&self.model).to_string();
         let message_request = MessageRequest {
-            model: self.model.clone(),
+            model: resolved_model,
             max_tokens: max_tokens_for_model(&self.model),
             messages: convert_messages(&request.messages),
             system: (!request.system_prompt.is_empty()).then(|| request.system_prompt.join("\n\n")),
@@ -6550,7 +6623,7 @@ fn response_to_events(
     Ok(events)
 }
 
-fn push_prompt_cache_record(client: &AnthropicClient, events: &mut Vec<AssistantEvent>) {
+fn push_prompt_cache_record(client: &ProviderClient, events: &mut Vec<AssistantEvent>) {
     if let Some(record) = client.take_last_prompt_cache_record() {
         if let Some(event) = prompt_cache_record_to_runtime_event(record) {
             events.push(AssistantEvent::PromptCache(event));
@@ -6859,7 +6932,12 @@ fn print_help_to(out: &mut impl Write) -> io::Result<()> {
         "  Use /session list in the REPL to browse managed sessions"
     )?;
     writeln!(out, "Examples:")?;
-    writeln!(out, "  claw --model claude-opus \"summarize this repo\"")?;
+    writeln!(out, "  claw \"summarize this repo\"")?;
+    writeln!(out, "  claw --model or-free \"explain this code\"")?;
+    writeln!(out, "  claw --model or-gpt-5 \"write a test\"")?;
+    writeln!(out, "  claw --model or-gemini \"review this PR\"")?;
+    writeln!(out, "  claw --model or-qwen \"refactor this function\"")?;
+    writeln!(out, "  claw --model claude-opus \"deep analysis\"")?;
     writeln!(
         out,
         "  claw --output-format json prompt \"explain src/main.rs\""
@@ -7455,10 +7533,30 @@ mod tests {
 
     #[test]
     fn resolves_known_model_aliases() {
+        // OpenRouter (PRIMARY)
+        assert_eq!(resolve_model_alias("or-free"), "openrouter/free");
+        assert_eq!(resolve_model_alias("free"), "openrouter/free");
+        assert_eq!(resolve_model_alias("or-sonnet"), "anthropic/claude-sonnet-4.6");
+        assert_eq!(resolve_model_alias("or-opus"), "anthropic/claude-opus-4.6");
+        assert_eq!(resolve_model_alias("or-gpt-5"), "openai/gpt-5");
+        assert_eq!(resolve_model_alias("or-gemini"), "google/gemini-2.5-pro");
+        assert_eq!(resolve_model_alias("or-gemini-flash"), "google/gemini-2.5-flash");
+        assert_eq!(resolve_model_alias("or-qwen"), "qwen/qwen3-235b-a22b");
+        assert_eq!(resolve_model_alias("or-qwen-max"), "qwen/qwen-max");
+        assert_eq!(resolve_model_alias("or-mistral"), "mistralai/mistral-large-2411");
+        assert_eq!(resolve_model_alias("or-llama"), "meta-llama/llama-4-maverick");
+        assert_eq!(resolve_model_alias("or-deepseek"), "deepseek/deepseek-chat-v3");
+        // Anthropic (secondary)
         assert_eq!(resolve_model_alias("opus"), "claude-opus-4-6");
         assert_eq!(resolve_model_alias("sonnet"), "claude-sonnet-4-6");
         assert_eq!(resolve_model_alias("haiku"), "claude-haiku-4-5-20251213");
         assert_eq!(resolve_model_alias("claude-opus"), "claude-opus");
+        // Gemini (secondary)
+        assert_eq!(resolve_model_alias("gemini-flash"), "gemini-2.5-flash");
+        assert_eq!(resolve_model_alias("gemini-pro"), "gemini-2.5-pro");
+        // Qwen (secondary)
+        assert_eq!(resolve_model_alias("qwen-max"), "qwen-max");
+        assert_eq!(resolve_model_alias("qwen-plus"), "qwen-plus");
     }
 
     #[test]

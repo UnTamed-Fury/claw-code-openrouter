@@ -89,9 +89,23 @@ Supported permission modes:
 
 Model aliases currently supported by the CLI:
 
+**Anthropic (direct):**
 - `opus` → `claude-opus-4-6`
 - `sonnet` → `claude-sonnet-4-6`
 - `haiku` → `claude-haiku-4-5-20251213`
+
+**OpenRouter (multi-provider gateway):**
+- `or-sonnet` → `anthropic/claude-sonnet-4.6`
+- `or-opus` → `anthropic/claude-opus-4.6`
+- `or-haiku` → `anthropic/claude-3-5-haiku-20241022`
+- `or-gpt-4o` → `openai/gpt-4o`
+- `or-gpt-5` → `openai/gpt-5`
+- `or-gemini` → `google/gemini-2.5-pro`
+- `or-grok` → `x-ai/grok-3`
+- `or-qwen` → `qwen/qwen3-235b-a22b`
+- `or-free` → `openrouter/free`
+
+You can also pass raw provider-prefixed IDs directly (e.g., `--model anthropic/claude-sonnet-4.6`).
 
 ## Authentication
 
@@ -108,6 +122,21 @@ cd rust
 ./target/debug/claw login
 ./target/debug/claw logout
 ```
+
+### OpenRouter
+
+[OpenRouter](https://openrouter.ai) provides access to hundreds of models (Anthropic, OpenAI, Google, etc.) through a single API key.
+
+```bash
+export OPENROUTER_API_KEY="sk-or-..."
+cd rust
+./target/debug/claw --model or-sonnet "explain this code"
+./target/debug/claw --model or-gpt-5 "write a test"
+./target/debug/claw --model or-gemini "review this PR"
+./target/debug/claw --model anthropic/claude-sonnet-4.6 "summarize the repo"
+```
+
+You can also use raw provider-prefixed model IDs directly — any model ID containing `/` (like `anthropic/...`, `openai/...`, `google/...`) auto-detects as OpenRouter.
 
 ## Common operational commands
 
