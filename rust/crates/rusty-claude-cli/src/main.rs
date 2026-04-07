@@ -655,7 +655,7 @@ fn format_unknown_slash_command(name: &str) -> String {
 fn omc_compatibility_note_for_unknown_slash_command(name: &str) -> Option<&'static str> {
     name.starts_with("oh-my-claudecode:")
         .then_some(
-            "Compatibility note: `/oh-my-claudecode:*` is a Claude Code/OMC plugin command. `claw` does not yet load plugin slash commands, Claude statusline stdin, or OMC session hooks.",
+            "Compatibility note: `/oh-my-claudecode:*` is an external plugin command. `claw` does not yet load plugin slash commands, external statusline stdin, or session hooks.",
         )
 }
 
@@ -7929,7 +7929,7 @@ mod tests {
     fn formats_namespaced_omc_slash_command_with_contract_guidance() {
         let report = format_unknown_slash_command_message("oh-my-claudecode:hud");
         assert!(report.contains("unknown slash command: /oh-my-claudecode:hud"));
-        assert!(report.contains("Claude Code/OMC plugin command"));
+        assert!(report.contains("external plugin command"));
         assert!(report.contains("plugin slash commands"));
         assert!(report.contains("statusline"));
         assert!(report.contains("session hooks"));
@@ -8736,7 +8736,7 @@ UU conflicted.rs",
     fn unknown_omc_slash_command_guidance_explains_runtime_gap() {
         let message = format_unknown_slash_command("oh-my-claudecode:hud");
         assert!(message.contains("Unknown slash command: /oh-my-claudecode:hud"));
-        assert!(message.contains("Claude Code/OMC plugin command"));
+        assert!(message.contains("external plugin command"));
         assert!(message.contains("does not yet load plugin slash commands"));
     }
 

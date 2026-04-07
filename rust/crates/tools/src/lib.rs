@@ -651,7 +651,7 @@ pub fn mvp_tool_specs() -> Vec<ToolSpec> {
         },
         ToolSpec {
             name: "Config",
-            description: "Get or set Claude Code settings.",
+            description: "Get or set workspace settings.",
             input_schema: json!({
                 "type": "object",
                 "properties": {
